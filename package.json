@@ -1,0 +1,10 @@
+{
+  "name": "com.larje.spritemapsgenerator",
+  "version": "0.1.0",
+  "displayName": "Sprite Maps Generator",
+  "description": "Editor tool that generates normal and mask maps for 2D sprites and Spine atlas pages: procedural maps (bevel + detail) and AI normal maps (Marigold via a local Python environment), blended per texture with a slider. Open via Tools > Sprite Maps Generator.",
+  "unity": "6000.0",
+  "author": {
+    "name": "Larje"
+  }
+}
