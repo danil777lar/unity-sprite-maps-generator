@@ -556,7 +556,7 @@ namespace Larje.SpriteMapsGenerator.Editor
                 Texture2D texture = _selection[ i ];
                 string path = AssetDatabase.GetAssetPath( texture );
                 string atlasPath = _atlasLocator.Find( path );
-                string outputPath = Path.GetFullPath( _generator.GetAiNormalPath( texture ) );
+                string outputPath = Path.GetFullPath( _generator.PrepareAiNormalPath( texture ) );
 
                 jobs.Add( new AiNormalsJob( Path.GetFullPath( path ), atlasPath, outputPath, _holder.Settings.Ai ) );
                 _aiTargets.Add( texture );

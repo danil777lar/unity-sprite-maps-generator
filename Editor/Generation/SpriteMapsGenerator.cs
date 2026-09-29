@@ -8,9 +8,8 @@ namespace Larje.SpriteMapsGenerator.Editor
 {
     public sealed class SpriteMapsGenerator
     {
-        public const string AiNormalSuffix = "_normal_ai";
-
         private readonly NormalBlender _blender = new();
+        private readonly SpriteMapsPaths _paths = new();
         private readonly TextureMapSettingsStore _store = new();
         private readonly Dictionary< string, CachedTexture > _cache = new();
 
@@ -23,16 +22,11 @@ namespace Larje.SpriteMapsGenerator.Editor
 
             string path = AssetDatabase.GetAssetPath( texture );
             string extension = Path.GetExtension( path ).ToLowerInvariant();
-            string name = Path.GetFileNameWithoutExtension( path );
-            SpriteMapsProjectSettings settings = SpriteMapsProjectSettings.instance;
+            SpriteMapsPaths paths = new();
 
             bool isSupportedFormat = extension == ".png" || extension == ".jpg" || extension == ".jpeg";
-            bool isGenerated =
-                EndsWithSuffix( name, settings.NormalSuffix ) ||
-                EndsWithSuffix( name, settings.MaskSuffix ) ||
-                EndsWithSuffix( name, AiNormalSuffix );
 
-            return isSupportedFormat && !isGenerated && AssetImporter.GetAtPath( path ) is TextureImporter;
+            return isSupportedFormat && !paths.IsInOutputFolder( path ) && AssetImporter.GetAtPath( path ) is TextureImporter;
         }
 
         public TextureMapSettings LoadSettings( Texture2D texture )
@@ -42,7 +36,13 @@ namespace Larje.SpriteMapsGenerator.Editor
 
         public string GetAiNormalPath( Texture2D texture )
         {
-            return GetSiblingPath( AssetDatabase.GetAssetPath( texture ), AiNormalSuffix );
+            return _paths.GetMapPath( AssetDatabase.GetAssetPath( texture ), SpriteMapsProjectSettings.instance.AiNormalSuffix );
+        }
+
+        public string PrepareAiNormalPath( Texture2D texture )
+        {
+            _paths.EnsureFolder( AssetDatabase.GetAssetPath( texture ) );
+            return GetAiNormalPath( texture );
         }
 
         public bool HasAiNormals( Texture2D texture )
@@ -55,42 +55,42 @@ namespace Larje.SpriteMapsGenerator.Editor
             string path = AssetDatabase.GetAssetPath( texture );
             CachedTexture cached = GetCached( path );
             ProceduralMaps procedural = GetProcedural( cached, settings.Procedural );
-            Vector3[] aiNormals = GetAiNormals( cached, path );
+            Vector3[] aiNormals = GetAiNormals( cached, GetAiNormalPath( texture ) );
 
             Vector3[] normals = _blender.Blend( procedural.Normals, aiNormals, cached.Source.Alpha, settings.Procedural.AlphaThreshold, settings.AiBlend );
             MaskMapGenerator maskGenerator = new( settings.Mask, settings.Procedural.AlphaThreshold );
             Color32[] mask = maskGenerator.Generate( cached.Source, procedural, normals );
 
-            return new ComposedMaps( cached.Source.Width, cached.Source.Height, _blender.Encode( normals ), mask );
+            return new ComposedMaps( cached.Source.Width, cached.Source.Height, _blender.Encode( normals ), _blender.Encode( procedural.Normals ), mask );
         }
 
         public void Apply( Texture2D texture, TextureMapSettings settings )
         {
             SpriteMapsProjectSettings projectSettings = SpriteMapsProjectSettings.instance;
             string sourcePath = AssetDatabase.GetAssetPath( texture );
-            string normalPath = GetSiblingPath( sourcePath, projectSettings.NormalSuffix );
-            string maskPath = GetSiblingPath( sourcePath, projectSettings.MaskSuffix );
-            string aiNormalPath = GetSiblingPath( sourcePath, AiNormalSuffix );
+            string normalPath = _paths.GetMapPath( sourcePath, projectSettings.NormalSuffix );
+            string proceduralNormalPath = _paths.GetMapPath( sourcePath, projectSettings.ProceduralNormalSuffix );
+            string aiNormalPath = _paths.GetMapPath( sourcePath, projectSettings.AiNormalSuffix );
+            string maskPath = _paths.GetMapPath( sourcePath, projectSettings.MaskSuffix );
+            TextureImporter sourceImporter = GetImporter( texture );
             ComposedMaps maps = Compose( texture, settings );
 
-            PngFile.Write( normalPath, maps.Normals, maps.Width, maps.Height );
-            PngFile.Write( maskPath, maps.Mask, maps.Width, maps.Height );
-            AssetDatabase.ImportAsset( normalPath, ImportAssetOptions.ForceSynchronousImport );
-            AssetDatabase.ImportAsset( maskPath, ImportAssetOptions.ForceSynchronousImport );
+            _paths.EnsureFolder( sourcePath );
 
-            TextureImporter sourceImporter = GetImporter( texture );
-            ConfigureDataTexture( normalPath, sourceImporter );
-            ConfigureDataTexture( maskPath, sourceImporter );
+            Texture2D normalMap = WriteMap( normalPath, maps.Normals, maps, sourceImporter );
+            Texture2D proceduralNormalMap = WriteMap( proceduralNormalPath, maps.ProceduralNormals, maps, sourceImporter );
+            Texture2D maskMap = WriteMap( maskPath, maps.Mask, maps, sourceImporter );
+            Texture2D aiNormalMap = LoadDataTexture( aiNormalPath, sourceImporter );
 
-            if ( File.Exists( aiNormalPath ) )
+            SecondarySpriteTexture[] ownTextures =
             {
-                ConfigureDataTexture( aiNormalPath, sourceImporter );
-            }
+                new() { name = projectSettings.NormalTextureName, texture = normalMap },
+                new() { name = projectSettings.ProceduralNormalTextureName, texture = proceduralNormalMap },
+                new() { name = projectSettings.AiNormalTextureName, texture = aiNormalMap },
+                new() { name = projectSettings.MaskTextureName, texture = maskMap }
+            };
 
-            Texture2D normalMap = AssetDatabase.LoadAssetAtPath< Texture2D >( normalPath );
-            Texture2D maskMap = AssetDatabase.LoadAssetAtPath< Texture2D >( maskPath );
-
-            bool isImporterChanged = AssignSecondaryTextures( sourceImporter, projectSettings, normalMap, maskMap );
+            bool isImporterChanged = AssignSecondaryTextures( sourceImporter, ownTextures );
             isImporterChanged |= _store.Store( sourceImporter, settings );
 
             if ( isImporterChanged )
@@ -98,7 +98,7 @@ namespace Larje.SpriteMapsGenerator.Editor
                 sourceImporter.SaveAndReimport();
             }
 
-            SpriteMapsEvents.RaiseMapsGenerated( new SpriteMapsResult( texture, sourceImporter, normalMap, maskMap ) );
+            SpriteMapsEvents.RaiseMapsGenerated( new SpriteMapsResult( texture, sourceImporter, normalMap, proceduralNormalMap, aiNormalMap, maskMap ) );
         }
 
         public void ClearCache()
@@ -106,22 +106,9 @@ namespace Larje.SpriteMapsGenerator.Editor
             _cache.Clear();
         }
 
-        private static bool EndsWithSuffix( string name, string suffix )
-        {
-            return !string.IsNullOrEmpty( suffix ) && name.EndsWith( suffix, StringComparison.Ordinal );
-        }
-
         private TextureImporter GetImporter( Texture2D texture )
         {
             return (TextureImporter)AssetImporter.GetAtPath( AssetDatabase.GetAssetPath( texture ) );
-        }
-
-        private string GetSiblingPath( string sourcePath, string suffix )
-        {
-            string directory = Path.GetDirectoryName( sourcePath );
-            string name = Path.GetFileNameWithoutExtension( sourcePath );
-
-            return Path.Combine( directory, name + suffix + ".png" ).Replace( '\\', '/' );
         }
 
         private CachedTexture GetCached( string path )
@@ -151,10 +138,8 @@ namespace Larje.SpriteMapsGenerator.Editor
             return cached.Procedural;
         }
 
-        private Vector3[] GetAiNormals( CachedTexture cached, string sourcePath )
+        private Vector3[] GetAiNormals( CachedTexture cached, string aiNormalPath )
         {
-            string aiNormalPath = GetSiblingPath( sourcePath, AiNormalSuffix );
-
             if ( !File.Exists( aiNormalPath ) )
             {
                 cached.SetAiNormals( default, null );
@@ -177,6 +162,26 @@ namespace Larje.SpriteMapsGenerator.Editor
             }
 
             return cached.AiNormals;
+        }
+
+        private Texture2D WriteMap( string path, Color32[] pixels, ComposedMaps maps, TextureImporter sourceImporter )
+        {
+            PngFile.Write( path, pixels, maps.Width, maps.Height );
+            AssetDatabase.ImportAsset( path, ImportAssetOptions.ForceSynchronousImport );
+
+            return LoadDataTexture( path, sourceImporter );
+        }
+
+        private Texture2D LoadDataTexture( string path, TextureImporter sourceImporter )
+        {
+            if ( !File.Exists( path ) )
+            {
+                return null;
+            }
+
+            ConfigureDataTexture( path, sourceImporter );
+
+            return AssetDatabase.LoadAssetAtPath< Texture2D >( path );
         }
 
         private void ConfigureDataTexture( string path, TextureImporter sourceImporter )
@@ -222,36 +227,67 @@ namespace Larje.SpriteMapsGenerator.Editor
             importer.SaveAndReimport();
         }
 
-        private bool AssignSecondaryTextures( TextureImporter importer, SpriteMapsProjectSettings settings, Texture2D normalMap, Texture2D maskMap )
+        private bool AssignSecondaryTextures( TextureImporter importer, SecondarySpriteTexture[] ownTextures )
         {
             SecondarySpriteTexture[] existing = importer.secondarySpriteTextures ?? Array.Empty< SecondarySpriteTexture >();
             List< SecondarySpriteTexture > textures = new();
-            bool hasNormal = false;
-            bool hasMask = false;
 
             for ( int i = 0; i < existing.Length; i++ )
             {
-                SecondarySpriteTexture texture = existing[ i ];
-                bool isOwnName = texture.name == settings.NormalTextureName || texture.name == settings.MaskTextureName;
-                bool isOwnTexture = texture.texture == normalMap || texture.texture == maskMap;
-
-                hasNormal |= texture.name == settings.NormalTextureName && texture.texture == normalMap;
-                hasMask |= texture.name == settings.MaskTextureName && texture.texture == maskMap;
-
-                if ( !isOwnName && !isOwnTexture )
+                if ( !IsOwnTexture( existing[ i ], ownTextures ) )
                 {
-                    textures.Add( texture );
+                    textures.Add( existing[ i ] );
                 }
             }
 
-            if ( hasNormal && hasMask && textures.Count + 2 == existing.Length )
+            for ( int i = 0; i < ownTextures.Length; i++ )
+            {
+                if ( ownTextures[ i ].texture != null )
+                {
+                    textures.Add( ownTextures[ i ] );
+                }
+            }
+
+            if ( AreSameTextures( existing, textures ) )
             {
                 return false;
             }
 
-            textures.Add( new SecondarySpriteTexture { name = settings.NormalTextureName, texture = normalMap } );
-            textures.Add( new SecondarySpriteTexture { name = settings.MaskTextureName, texture = maskMap } );
             importer.secondarySpriteTextures = textures.ToArray();
+
+            return true;
+        }
+
+        private bool IsOwnTexture( SecondarySpriteTexture texture, SecondarySpriteTexture[] ownTextures )
+        {
+            for ( int i = 0; i < ownTextures.Length; i++ )
+            {
+                bool isOwnName = texture.name == ownTextures[ i ].name;
+                bool isOwnAsset = texture.texture != null && texture.texture == ownTextures[ i ].texture;
+
+                if ( isOwnName || isOwnAsset )
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool AreSameTextures( SecondarySpriteTexture[] existing, List< SecondarySpriteTexture > textures )
+        {
+            if ( existing.Length != textures.Count )
+            {
+                return false;
+            }
+
+            for ( int i = 0; i < existing.Length; i++ )
+            {
+                if ( existing[ i ].name != textures[ i ].name || existing[ i ].texture != textures[ i ].texture )
+                {
+                    return false;
+                }
+            }
 
             return true;
         }
