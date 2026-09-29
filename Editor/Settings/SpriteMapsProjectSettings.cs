@@ -17,8 +17,6 @@ namespace Larje.SpriteMapsGenerator.Editor
 
         [ Header( "Sprite Secondary Textures" ) ]
         [ SerializeField ] private string _normalTextureName = "_NormalMap";
-        [ SerializeField ] private string _proceduralNormalTextureName = "_NormalMapProcedural";
-        [ SerializeField ] private string _aiNormalTextureName = "_NormalMapAI";
         [ SerializeField ] private string _maskTextureName = "_MaskTex";
 
         public string OutputFolder => _outputFolder.Replace( '\\', '/' ).TrimEnd( '/' );
@@ -27,8 +25,6 @@ namespace Larje.SpriteMapsGenerator.Editor
         public string AiNormalSuffix => _aiNormalSuffix;
         public string MaskSuffix => _maskSuffix;
         public string NormalTextureName => _normalTextureName;
-        public string ProceduralNormalTextureName => _proceduralNormalTextureName;
-        public string AiNormalTextureName => _aiNormalTextureName;
         public string MaskTextureName => _maskTextureName;
 
         public void SaveSettings()

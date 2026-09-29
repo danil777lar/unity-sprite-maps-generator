@@ -87,12 +87,12 @@ namespace Larje.SpriteMapsGenerator.Editor
             SecondarySpriteTexture[] ownTextures =
             {
                 new() { name = projectSettings.NormalTextureName, texture = normalMap },
-                new() { name = projectSettings.ProceduralNormalTextureName, texture = proceduralNormalMap },
-                new() { name = projectSettings.AiNormalTextureName, texture = aiNormalMap },
                 new() { name = projectSettings.MaskTextureName, texture = maskMap }
             };
 
-            bool isImporterChanged = AssignSecondaryTextures( sourceImporter, ownTextures );
+            Texture2D[] editorOnlyTextures = { proceduralNormalMap, aiNormalMap };
+
+            bool isImporterChanged = AssignSecondaryTextures( sourceImporter, ownTextures, editorOnlyTextures );
             isImporterChanged |= _store.Store( sourceImporter, settings );
 
             if ( isImporterChanged )
@@ -229,14 +229,14 @@ namespace Larje.SpriteMapsGenerator.Editor
             importer.SaveAndReimport();
         }
 
-        private bool AssignSecondaryTextures( TextureImporter importer, SecondarySpriteTexture[] ownTextures )
+        private bool AssignSecondaryTextures( TextureImporter importer, SecondarySpriteTexture[] ownTextures, Texture2D[] editorOnlyTextures )
         {
             SecondarySpriteTexture[] existing = importer.secondarySpriteTextures ?? Array.Empty< SecondarySpriteTexture >();
             List< SecondarySpriteTexture > textures = new();
 
             for ( int i = 0; i < existing.Length; i++ )
             {
-                if ( !IsOwnTexture( existing[ i ], ownTextures ) )
+                if ( !IsOwnTexture( existing[ i ], ownTextures ) && !IsEditorOnlyTexture( existing[ i ], editorOnlyTextures ) )
                 {
                     textures.Add( existing[ i ] );
                 }
@@ -268,6 +268,24 @@ namespace Larje.SpriteMapsGenerator.Editor
                 bool isOwnAsset = texture.texture != null && texture.texture == ownTextures[ i ].texture;
 
                 if ( isOwnName || isOwnAsset )
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsEditorOnlyTexture( SecondarySpriteTexture texture, Texture2D[] editorOnlyTextures )
+        {
+            if ( texture.texture == null )
+            {
+                return false;
+            }
+
+            for ( int i = 0; i < editorOnlyTextures.Length; i++ )
+            {
+                if ( texture.texture == editorOnlyTextures[ i ] )
                 {
                     return true;
                 }
