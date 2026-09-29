@@ -44,6 +44,8 @@ namespace Larje.SpriteMapsGenerator.Editor
         private SerializedObject _serializedHolder;
         private Texture2D _activeTexture;
         private Texture2D _normalPreview;
+        private Texture2D _proceduralNormalPreview;
+        private Texture2D _aiNormalPreview;
         private Texture2D _maskPreview;
         private readonly StringBuilder _log = new();
         private readonly List< Texture2D > _selection = new();
@@ -84,7 +86,7 @@ namespace Larje.SpriteMapsGenerator.Editor
             _aiRunner = new AiNormalsRunner();
             _atlasLocator = new SpineAtlasLocator();
             _holder = CreateInstance< TextureMapSettingsHolder >();
-            _holder.hideFlags = HideFlags.HideAndDontSave;
+            _holder.hideFlags = HideFlags.HideAndDontSave & ~HideFlags.NotEditable;
             _serializedHolder = new SerializedObject( _holder );
 
             _environment.OutputReceived += AppendLog;
@@ -111,6 +113,8 @@ namespace Larje.SpriteMapsGenerator.Editor
 
             DestroyImmediate( _holder );
             DestroyPreview( _normalPreview );
+            DestroyPreview( _proceduralNormalPreview );
+            DestroyPreview( _aiNormalPreview );
             DestroyPreview( _maskPreview );
         }
 
@@ -348,8 +352,14 @@ namespace Larje.SpriteMapsGenerator.Editor
             using ( new EditorGUILayout.HorizontalScope() )
             {
                 DrawPreviewTexture( "Source", _activeTexture, true );
-                DrawPreviewTexture( "Normal", _normalPreview, false );
                 DrawPreviewTexture( "Mask", _maskPreview, false );
+            }
+
+            using ( new EditorGUILayout.HorizontalScope() )
+            {
+                DrawPreviewTexture( "Procedural Normal", _proceduralNormalPreview, false );
+                DrawPreviewTexture( "AI Normal", _aiNormalPreview, false );
+                DrawPreviewTexture( "Final Normal", _normalPreview, false );
             }
         }
 
@@ -362,6 +372,7 @@ namespace Larje.SpriteMapsGenerator.Editor
 
                 if ( texture == null )
                 {
+                    GUI.Label( rect, "None", EditorStyles.centeredGreyMiniLabel );
                     return;
                 }
 
@@ -505,12 +516,20 @@ namespace Larje.SpriteMapsGenerator.Editor
 
             ComposedMaps maps = _generator.Compose( _activeTexture, _holder.Settings );
             _normalPreview = WritePreview( _normalPreview, maps.Normals, maps.Width, maps.Height );
+            _proceduralNormalPreview = WritePreview( _proceduralNormalPreview, maps.ProceduralNormals, maps.Width, maps.Height );
+            _aiNormalPreview = WritePreview( _aiNormalPreview, maps.AiNormals, maps.Width, maps.Height );
             _maskPreview = WritePreview( _maskPreview, maps.Mask, maps.Width, maps.Height );
             Repaint();
         }
 
         private Texture2D WritePreview( Texture2D texture, Color32[] pixels, int width, int height )
         {
+            if ( pixels == null )
+            {
+                DestroyPreview( texture );
+                return null;
+            }
+
             if ( texture == null || texture.width != width || texture.height != height )
             {
                 DestroyPreview( texture );

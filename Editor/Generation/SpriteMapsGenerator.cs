@@ -61,7 +61,9 @@ namespace Larje.SpriteMapsGenerator.Editor
             MaskMapGenerator maskGenerator = new( settings.Mask, settings.Procedural.AlphaThreshold );
             Color32[] mask = maskGenerator.Generate( cached.Source, procedural, normals );
 
-            return new ComposedMaps( cached.Source.Width, cached.Source.Height, _blender.Encode( normals ), _blender.Encode( procedural.Normals ), mask );
+            Color32[] encodedAiNormals = aiNormals != null ? _blender.Encode( aiNormals ) : null;
+
+            return new ComposedMaps( cached.Source.Width, cached.Source.Height, _blender.Encode( normals ), _blender.Encode( procedural.Normals ), encodedAiNormals, mask );
         }
 
         public void Apply( Texture2D texture, TextureMapSettings settings )
