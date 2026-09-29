@@ -1,0 +1,29 @@
+{
+    "name": "Larje.SpriteMapsGenerator.Editor.Mcp",
+    "rootNamespace": "Larje.SpriteMapsGenerator.Editor.Mcp",
+    "references": [
+        "Larje.SpriteMapsGenerator.Editor",
+        "Unity.AI.MCP.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "Newtonsoft.Json.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "LARJE_SPRITEMAPS_MCP"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.ai.assistant",
+            "expression": "2.0.0-pre.1",
+            "define": "LARJE_SPRITEMAPS_MCP"
+        }
+    ],
+    "noEngineReferences": false
+}

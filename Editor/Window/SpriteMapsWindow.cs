@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using UnityEditor;
 using UnityEngine;
 
@@ -19,7 +18,6 @@ namespace Larje.SpriteMapsGenerator.Editor
         private const float PreviewSize = 160f;
         private const float ButtonWidth = 90f;
         private const float LogHeight = 160f;
-        private const int MaxLogLength = 20000;
 
         [ SerializeField ] private bool _showProcedural = true;
         [ SerializeField ] private bool _showMask;
@@ -27,19 +25,16 @@ namespace Larje.SpriteMapsGenerator.Editor
         [ SerializeField ] private bool _showLog;
 
         private bool _isApplyPending;
+        private bool _isApplying;
         private bool _isPreviewDirty;
-        private int _progressIndex;
-        private int _progressTotal;
         private double _applyTime;
-        private string _progressLabel = string.Empty;
         private string _activeAtlasPath;
         private Vector2 _scroll;
         private Vector2 _logScroll;
 
+        private SpriteMapsService _service;
         private SpriteMapsGenerator _generator;
         private PythonEnvironment _environment;
-        private AiNormalsRunner _aiRunner;
-        private SpineAtlasLocator _atlasLocator;
         private TextureMapSettingsHolder _holder;
         private SerializedObject _serializedHolder;
         private Texture2D _activeTexture;
@@ -47,9 +42,7 @@ namespace Larje.SpriteMapsGenerator.Editor
         private Texture2D _proceduralNormalPreview;
         private Texture2D _aiNormalPreview;
         private Texture2D _maskPreview;
-        private readonly StringBuilder _log = new();
         private readonly List< Texture2D > _selection = new();
-        private readonly List< Texture2D > _aiTargets = new();
 
         [ MenuItem( ToolsMenuPath ) ]
         private static void Open()
@@ -81,19 +74,18 @@ namespace Larje.SpriteMapsGenerator.Editor
 
         private void OnEnable()
         {
-            _generator = new SpriteMapsGenerator();
-            _environment = new PythonEnvironment( SpriteMapsUserSettings.instance );
-            _aiRunner = new AiNormalsRunner();
-            _atlasLocator = new SpineAtlasLocator();
+            _service = SpriteMapsService.Instance;
+            _generator = _service.Generator;
+            _environment = _service.Environment;
             _holder = CreateInstance< TextureMapSettingsHolder >();
             _holder.hideFlags = HideFlags.HideAndDontSave & ~HideFlags.NotEditable;
             _serializedHolder = new SerializedObject( _holder );
 
-            _environment.OutputReceived += AppendLog;
-            _environment.InstallCompleted += HandleInstallCompleted;
-            _aiRunner.OutputReceived += AppendLog;
-            _aiRunner.ProgressChanged += HandleAiProgress;
-            _aiRunner.Completed += HandleAiCompleted;
+            _service.OutputReceived += HandleOutput;
+            _service.ProgressChanged += Repaint;
+            _service.AiCompleted += HandleJobCompleted;
+            _service.InstallCompleted += HandleJobCompleted;
+            SpriteMapsEvents.MapsGenerated += HandleMapsGenerated;
 
             RefreshSelection();
         }
@@ -102,14 +94,11 @@ namespace Larje.SpriteMapsGenerator.Editor
         {
             FlushPendingApply();
 
-            _environment.OutputReceived -= AppendLog;
-            _environment.InstallCompleted -= HandleInstallCompleted;
-            _aiRunner.OutputReceived -= AppendLog;
-            _aiRunner.ProgressChanged -= HandleAiProgress;
-            _aiRunner.Completed -= HandleAiCompleted;
-
-            _aiRunner.Cancel();
-            _environment.Cancel();
+            _service.OutputReceived -= HandleOutput;
+            _service.ProgressChanged -= Repaint;
+            _service.AiCompleted -= HandleJobCompleted;
+            _service.InstallCompleted -= HandleJobCompleted;
+            SpriteMapsEvents.MapsGenerated -= HandleMapsGenerated;
 
             DestroyImmediate( _holder );
             DestroyPreview( _normalPreview );
@@ -160,7 +149,7 @@ namespace Larje.SpriteMapsGenerator.Editor
         private void DrawEnvironment()
         {
             SpriteMapsUserSettings userSettings = SpriteMapsUserSettings.instance;
-            bool isBusy = _environment.IsInstalling || _aiRunner.IsRunning;
+            bool isBusy = _service.IsBusy;
             string status = _environment.IsInstalled ? $"Installed ({_environment.InstalledBackend})" : "Not installed";
 
             EditorGUILayout.LabelField( "AI Environment", EditorStyles.boldLabel );
@@ -187,7 +176,7 @@ namespace Larje.SpriteMapsGenerator.Editor
 
                     if ( GUILayout.Button( "Cancel", GUILayout.Width( ButtonWidth ) ) )
                     {
-                        _environment.Cancel();
+                        _service.Cancel();
                     }
                 }
                 else
@@ -296,7 +285,7 @@ namespace Larje.SpriteMapsGenerator.Editor
 
         private void DrawActions()
         {
-            bool isBusy = _aiRunner.IsRunning || _environment.IsInstalling;
+            bool isBusy = _service.IsBusy;
 
             EditorGUILayout.LabelField( "Generate", EditorStyles.boldLabel );
 
@@ -322,7 +311,7 @@ namespace Larje.SpriteMapsGenerator.Editor
                 EditorGUILayout.HelpBox( "Install the AI environment to generate AI normals.", MessageType.None );
             }
 
-            if ( !_aiRunner.IsRunning )
+            if ( !_service.IsAiRunning )
             {
                 return;
             }
@@ -330,12 +319,12 @@ namespace Larje.SpriteMapsGenerator.Editor
             using ( new EditorGUILayout.HorizontalScope() )
             {
                 Rect rect = GUILayoutUtility.GetRect( 18f, 18f, GUILayout.ExpandWidth( true ) );
-                float progress = _progressTotal > 0 ? (float)_progressIndex / _progressTotal : 0f;
-                EditorGUI.ProgressBar( rect, progress, $"{_progressLabel} ({_progressIndex}/{_progressTotal})" );
+                float progress = _service.ProgressTotal > 0 ? (float)_service.ProgressIndex / _service.ProgressTotal : 0f;
+                EditorGUI.ProgressBar( rect, progress, $"{_service.ProgressLabel} ({_service.ProgressIndex}/{_service.ProgressTotal})" );
 
                 if ( GUILayout.Button( "Cancel", GUILayout.Width( ButtonWidth ) ) )
                 {
-                    _aiRunner.Cancel();
+                    _service.Cancel();
                 }
             }
         }
@@ -397,12 +386,12 @@ namespace Larje.SpriteMapsGenerator.Editor
             }
 
             _logScroll = EditorGUILayout.BeginScrollView( _logScroll, GUILayout.Height( LogHeight ) );
-            EditorGUILayout.SelectableLabel( _log.ToString(), EditorStyles.wordWrappedMiniLabel, GUILayout.ExpandHeight( true ) );
+            EditorGUILayout.SelectableLabel( _service.Log, EditorStyles.wordWrappedMiniLabel, GUILayout.ExpandHeight( true ) );
             EditorGUILayout.EndScrollView();
 
             if ( GUILayout.Button( "Clear Log", GUILayout.Width( ButtonWidth ) ) )
             {
-                _log.Clear();
+                _service.ClearLog();
             }
         }
 
@@ -437,7 +426,7 @@ namespace Larje.SpriteMapsGenerator.Editor
             {
                 _holder.Settings = _generator.LoadSettings( _activeTexture );
                 _serializedHolder.Update();
-                _activeAtlasPath = _atlasLocator.Find( AssetDatabase.GetAssetPath( _activeTexture ) );
+                _activeAtlasPath = _service.AtlasLocator.Find( AssetDatabase.GetAssetPath( _activeTexture ) );
             }
 
             _isPreviewDirty = true;
@@ -462,47 +451,30 @@ namespace Larje.SpriteMapsGenerator.Editor
 
         private void ApplyWithSettings( List< Texture2D > textures, TextureMapSettings settings )
         {
+            _isApplying = true;
+
             try
             {
-                for ( int i = 0; i < textures.Count; i++ )
-                {
-                    ShowApplyProgress( textures, i );
-                    _generator.Apply( textures[ i ], settings.Clone() );
-                }
+                _service.Apply( textures, CloneForEach( textures, settings ) );
             }
             finally
             {
-                EditorUtility.ClearProgressBar();
+                _isApplying = false;
             }
 
             UpdatePreview();
         }
 
-        private void ApplyWithStoredSettings( List< Texture2D > textures )
+        private List< TextureMapSettings > CloneForEach( List< Texture2D > textures, TextureMapSettings settings )
         {
-            try
+            List< TextureMapSettings > clones = new();
+
+            for ( int i = 0; i < textures.Count; i++ )
             {
-                for ( int i = 0; i < textures.Count; i++ )
-                {
-                    ShowApplyProgress( textures, i );
-                    _generator.Apply( textures[ i ], _generator.LoadSettings( textures[ i ] ) );
-                }
-            }
-            finally
-            {
-                EditorUtility.ClearProgressBar();
+                clones.Add( settings.Clone() );
             }
 
-            RefreshSelection();
-            UpdatePreview();
-        }
-
-        private void ShowApplyProgress( List< Texture2D > textures, int index )
-        {
-            if ( textures.Count > 1 )
-            {
-                EditorUtility.DisplayProgressBar( WindowTitle, textures[ index ].name, (float)index / textures.Count );
-            }
+            return clones;
         }
 
         private void UpdatePreview()
@@ -559,84 +531,46 @@ namespace Larje.SpriteMapsGenerator.Editor
             }
 
             _showLog = true;
-            _environment.Install( isClean );
+            _service.Install( isClean );
         }
 
         private void RunAi()
         {
             _isApplyPending = false;
-            ApplyWithSettings( _selection, _holder.Settings );
-
-            List< AiNormalsJob > jobs = new();
-            _aiTargets.Clear();
-
-            for ( int i = 0; i < _selection.Count; i++ )
-            {
-                Texture2D texture = _selection[ i ];
-                string path = AssetDatabase.GetAssetPath( texture );
-                string atlasPath = _atlasLocator.Find( path );
-                string outputPath = Path.GetFullPath( _generator.PrepareAiNormalPath( texture ) );
-
-                jobs.Add( new AiNormalsJob( Path.GetFullPath( path ), atlasPath, outputPath, _holder.Settings.Ai ) );
-                _aiTargets.Add( texture );
-            }
-
-            _progressIndex = 0;
-            _progressTotal = jobs.Count;
-            _progressLabel = "Loading model";
             _showLog = true;
+            _isApplying = true;
 
-            if ( !_aiRunner.Run( _environment, SpriteMapsUserSettings.instance, jobs ) )
+            try
             {
-                _aiTargets.Clear();
+                _service.RunAi( _selection, CloneForEach( _selection, _holder.Settings ) );
             }
+            finally
+            {
+                _isApplying = false;
+            }
+
+            UpdatePreview();
         }
 
-        private void HandleAiProgress( int index, int total, string label )
+        private void HandleMapsGenerated( SpriteMapsResult result )
         {
-            _progressIndex = index;
-            _progressTotal = total;
-            _progressLabel = label;
+            if ( _isApplying || result.Source != _activeTexture )
+            {
+                return;
+            }
+
+            _isApplyPending = false;
+            RefreshSelection();
             Repaint();
         }
 
-        private void HandleAiCompleted( bool isSuccess )
-        {
-            AssetDatabase.Refresh();
-
-            List< Texture2D > targets = new();
-
-            for ( int i = 0; i < _aiTargets.Count; i++ )
-            {
-                if ( _aiTargets[ i ] != null && _generator.HasAiNormals( _aiTargets[ i ] ) )
-                {
-                    targets.Add( _aiTargets[ i ] );
-                }
-            }
-
-            _aiTargets.Clear();
-            ApplyWithStoredSettings( targets );
-
-            if ( !isSuccess )
-            {
-                Debug.LogWarning( "[SpriteMapsGenerator] AI normals finished with errors, see the log in the Sprite Maps window" );
-            }
-        }
-
-        private void HandleInstallCompleted( bool isSuccess )
+        private void HandleJobCompleted( bool isSuccess )
         {
             Repaint();
         }
 
-        private void AppendLog( string line )
+        private void HandleOutput( string line )
         {
-            _log.AppendLine( line );
-
-            if ( _log.Length > MaxLogLength )
-            {
-                _log.Remove( 0, _log.Length - MaxLogLength );
-            }
-
             _logScroll.y = float.MaxValue;
             Repaint();
         }
