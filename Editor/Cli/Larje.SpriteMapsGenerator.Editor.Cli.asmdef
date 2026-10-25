@@ -1,9 +1,9 @@
 {
-    "name": "Larje.SpriteMapsGenerator.Editor.Mcp",
-    "rootNamespace": "Larje.SpriteMapsGenerator.Editor.Mcp",
+    "name": "Larje.SpriteMapsGenerator.Editor.Cli",
+    "rootNamespace": "Larje.SpriteMapsGenerator.Editor.Cli",
     "references": [
         "Larje.SpriteMapsGenerator.Editor",
-        "Unity.AI.MCP.Editor"
+        "Unity.Pipeline.Attributes"
     ],
     "includePlatforms": [
         "Editor"
@@ -16,13 +16,13 @@
     ],
     "autoReferenced": false,
     "defineConstraints": [
-        "LARJE_SPRITEMAPS_MCP"
+        "LARJE_SPRITEMAPS_PIPELINE"
     ],
     "versionDefines": [
         {
-            "name": "com.unity.ai.assistant",
-            "expression": "2.0.0-pre.1",
-            "define": "LARJE_SPRITEMAPS_MCP"
+            "name": "com.unity.pipeline",
+            "expression": "0.9.1-exp.1",
+            "define": "LARJE_SPRITEMAPS_PIPELINE"
         }
     ],
     "noEngineReferences": false

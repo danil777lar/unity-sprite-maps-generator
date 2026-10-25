@@ -4,7 +4,7 @@ using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
-namespace Larje.SpriteMapsGenerator.Editor.Mcp
+namespace Larje.SpriteMapsGenerator.Editor.Cli
 {
     public sealed class SpriteMapsSettingsJson
     {
